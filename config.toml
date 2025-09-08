@@ -1,0 +1,53 @@
+[engine.runner]
+# How many iterations to complete for aborting.
+iteration_limit = 30
+# Maximum number of nodes the e-graph can have before aborting.
+node_limit = 10_000
+timeout_ms = 5000
+
+[engine.scheduler]
+disabled = true
+# How many iterations to ban a rule for.
+ban_length = 5
+# How many times a rule needs to be matched before it is banned.
+match_limit = 1000
+
+[engine.cost]
+operator_weight = 1
+number_weight = 1
+variable_weight = 1
+max_depth = 20
+
+[engine.logging]
+disabled = true
+# Which log messages to subscribe to.
+trace_rules = ["trace", "debug", "info"]
+
+[[rule]]
+name = "id"
+lhs = "x + 0"
+rhs = "x"
+# Prevents this rule from being banned.
+protected = true
+
+[[rule]]
+name = "comm-add"
+lhs = "x + y"
+rhs = "y + x"
+# Means this rule can be used in both directions.
+bidirectional = true
+
+[[rule]]
+name = "assoc"
+lhs = "(x + y) + z"
+rhs = "x + (y + z)"
+bidirectional = true
+disabled = true
+
+[[rule]]
+name = "div-def"
+lhs = "x / y"
+rhs = "x * (1 / y)"
+bidirectional = true
+# List of conditions that must be satisfied before this rule can be applied.
+conditions = ["y != 0"]
