@@ -1,4 +1,5 @@
 use egg::*;
+mod config_parse;
 
 define_language! {
     enum SimpleLanguage {

@@ -1,24 +1,24 @@
-[engine.runner]
+[runner]
 # How many iterations to complete for aborting.
 iteration_limit = 30
 # Maximum number of nodes the e-graph can have before aborting.
 node_limit = 10_000
 timeout_ms = 5000
 
-[engine.scheduler]
+[scheduler]
 disabled = true
 # How many iterations to ban a rule for.
 ban_length = 5
 # How many times a rule needs to be matched before it is banned.
 match_limit = 1000
 
-[engine.cost]
+[cost]
 operator_weight = 1
-number_weight = 1
-variable_weight = 1
-max_depth = 20
+number_weight = 1.0
+variable_weight = 1.0
+# max_depth = 20
 
-[engine.logging]
+[logging]
 disabled = true
 # Which log messages to subscribe to.
 trace_rules = ["trace", "debug", "info"]
