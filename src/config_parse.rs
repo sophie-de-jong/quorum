@@ -1,9 +1,9 @@
-use std::path::Path;
+use std::borrow::Cow;
 
 use serde::Deserialize;
 
 #[derive(Debug, Default, Deserialize, PartialEq)]
-pub struct Config {
+pub struct Config<'s> {
     #[serde(default)]
     pub runner: Runner,
     #[serde(default)]
@@ -12,15 +12,15 @@ pub struct Config {
     pub cost: Cost,
     #[serde(default)]
     pub logging: Logging,
-    #[serde(default, rename = "rule")]
-    pub rules: Vec<Rule>,
+    #[serde(borrow ,default, rename = "rule")]
+    pub rules: Vec<Rule<'s>>,
 }
 
 #[derive(Debug, Default, Deserialize, PartialEq)]
-pub struct Rule {
-    pub name: String,
-    pub lhs: String,
-    pub rhs: String,
+pub struct Rule<'s> {
+    pub name: Cow<'s, str>,
+    pub lhs: Cow<'s, str>,
+    pub rhs: Cow<'s, str>,
     #[serde(default)]
     pub bidirectional: bool,
     #[serde(default)]
@@ -106,32 +106,32 @@ mod tests {
 
     #[test]
     fn test_rule_parsing() {
-        let config: Config = toml::from_str("
+        let config: Config = toml::from_str(r#"
             [[rule]]
-            name = \"test_rule_1\"
-            lhs = \"x + y\"
-            rhs = \"y + x\"
+            name = "test_rule_1"
+            lhs = "x + y"
+            rhs = "y + x"
 
             [[rule]]
-            name = \"test_rule_2\"
-            lhs = \"x + 0\"
-            rhs = \"x\"
-        ").unwrap();
+            name = "test_rule_2"
+            lhs = "x + 0"
+            rhs = "x"
+        "#).unwrap();
         assert_eq!(
             config,
             Config {
                 rules: vec![
                     Rule {
-                        name: "test_rule_1".to_string(),
-                        lhs: "x + y".to_string(),
-                        rhs: "y + x".to_string(),
+                        name: "test_rule_1".into(),
+                        lhs: "x + y".into(),
+                        rhs: "y + x".into(),
                         ..Default::default()
 
                     },
                     Rule {
-                        name: "test_rule_2".to_string(),
-                        lhs: "x + 0".to_string(),
-                        rhs: "x".to_string(),
+                        name: "test_rule_2".into(),
+                        lhs: "x + 0".into(),
+                        rhs: "x".into(),
                         ..Default::default()
                     }
 
