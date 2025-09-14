@@ -44,4 +44,3 @@ fn simple_tests() {
     assert_eq!(simplify("(* 0 42)"), "0");
     assert_eq!(simplify("(+ 0 (* 1 foo))"), "foo");
 }
-

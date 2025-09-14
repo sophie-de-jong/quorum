@@ -48,31 +48,51 @@ impl Default for Runner {
     }
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq)]
 pub struct Scheduler {
     pub disabled: bool,
     pub ban_length: u32,
     pub match_limit: u32,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq)]
+impl Default for Scheduler {
+    fn default() -> Self {
+        Scheduler {
+            disabled: false,
+            ban_length: 5,
+            match_limit: 1000,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
 pub struct Cost {
     pub operator_weight: u32,
     pub number_weight: f32,
     pub variable_weight: f32,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq)]
+impl Default for Cost {
+    fn default() -> Self {
+        Cost {
+            operator_weight: 1,
+            number_weight: 1.0,
+            variable_weight: 1.0,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
 pub struct Logging {
-    pub disabled: bool,
     pub trace_rules: Vec<String>,
 }
 
-pub fn load_config(path: &Path) -> Config {
-    std::fs::read_to_string(path)
-        .and_then(|source| toml::from_str(&source)
-            .map_err(|err| std::io::Error::other(err)))
-        .unwrap_or_default()
+impl Default for Logging {
+    fn default() -> Self {
+        Logging {
+            trace_rules: Vec::new()
+        }
+    }
 }
 
 #[cfg(test)]
@@ -81,29 +101,42 @@ mod tests {
     #[test]
     fn test_empty_config() {
         let config: Config = toml::from_str("").unwrap();
+        assert_eq!(config, Config::default());
+    }
+
+    #[test]
+    fn test_rule_parsing() {
+        let config: Config = toml::from_str("
+            [[rule]]
+            name = \"test_rule_1\"
+            lhs = \"x + y\"
+            rhs = \"y + x\"
+
+            [[rule]]
+            name = \"test_rule_2\"
+            lhs = \"x + 0\"
+            rhs = \"x\"
+        ").unwrap();
         assert_eq!(
             config,
             Config {
-                runner: Runner {
-                    iteration_limit: 0,
-                    node_limit: 0,
-                    timeout_ms: 0,
-                },
-                scheduler: Scheduler {
-                    disabled: false,
-                    ban_length: 0,
-                    match_limit: 0,
-                },
-                cost: Cost {
-                    operator_weight: 0,
-                    number_weight: 0.0,
-                    variable_weight: 0.0,
-                },
-                logging: Logging {
-                    disabled: false,
-                    trace_rules: Vec::new(),
-                },
-                rules: Vec::new(),
+                rules: vec![
+                    Rule {
+                        name: "test_rule_1".to_string(),
+                        lhs: "x + y".to_string(),
+                        rhs: "y + x".to_string(),
+                        ..Default::default()
+
+                    },
+                    Rule {
+                        name: "test_rule_2".to_string(),
+                        lhs: "x + 0".to_string(),
+                        rhs: "x".to_string(),
+                        ..Default::default()
+                    }
+
+                ],
+                ..Default::default()
             }
         )
     }

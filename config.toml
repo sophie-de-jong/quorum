@@ -19,7 +19,7 @@ variable_weight = 1.0
 # max_depth = 20
 
 [logging]
-disabled = true
+# disabled = true
 # Which log messages to subscribe to.
 trace_rules = ["trace", "debug", "info"]
 
