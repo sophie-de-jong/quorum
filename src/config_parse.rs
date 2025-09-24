@@ -12,7 +12,7 @@ pub struct Config<'s> {
     pub cost: Cost,
     #[serde(default)]
     pub logging: Logging,
-    #[serde(borrow ,default, rename = "rule")]
+    #[serde(borrow, default, rename = "rule")]
     pub rules: Vec<Rule<'s>>,
 }
 
@@ -90,7 +90,7 @@ pub struct Logging {
 impl Default for Logging {
     fn default() -> Self {
         Logging {
-            trace_rules: Vec::new()
+            trace_rules: Vec::new(),
         }
     }
 }
@@ -106,7 +106,8 @@ mod tests {
 
     #[test]
     fn test_rule_parsing() {
-        let config: Config = toml::from_str(r#"
+        let config: Config = toml::from_str(
+            r#"
             [[rule]]
             name = "test_rule_1"
             lhs = "x + y"
@@ -116,7 +117,9 @@ mod tests {
             name = "test_rule_2"
             lhs = "x + 0"
             rhs = "x"
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         assert_eq!(
             config,
             Config {
@@ -126,7 +129,6 @@ mod tests {
                         lhs: "x + y".into(),
                         rhs: "y + x".into(),
                         ..Default::default()
-
                     },
                     Rule {
                         name: "test_rule_2".into(),
@@ -134,7 +136,6 @@ mod tests {
                         rhs: "x".into(),
                         ..Default::default()
                     }
-
                 ],
                 ..Default::default()
             }
