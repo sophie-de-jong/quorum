@@ -2,31 +2,32 @@ mod config_parse;
 mod math;
 mod parser;
 
+
 use egg::*;
 
-define_language! {
-    enum SimpleLanguage {
-        Num(i32),
-        "+" = Add([Id; 2]),
-        "*" = Mul([Id; 2]),
-        Symbol(Symbol),
-    }
+use crate::math::Node;
+use crate::parser::Expr;
+
+fn rewrite(name: &str, lhs: &str, rhs: &str) -> Rewrite<Node, ()> {
+    let lhs = parser::parse_pattern(lhs).unwrap();
+    let rhs = parser::parse_pattern(rhs).unwrap();
+    Rewrite::new(name, lhs, rhs).unwrap()
 }
 
-fn make_rules() -> Vec<Rewrite<SimpleLanguage, ()>> {
+fn make_rules() -> Vec<Rewrite<Node, ()>> {
     vec![
-        rewrite!("commute-add"; "(+ ?a ?b)" => "(+ ?b ?a)"),
-        rewrite!("commute-mul"; "(* ?a ?b)" => "(* ?b ?a)"),
-        rewrite!("add-0"; "(+ ?a 0)" => "?a"),
-        rewrite!("mul-0"; "(* ?a 0)" => "0"),
-        rewrite!("mul-1"; "(* ?a 1)" => "?a"),
+        rewrite("commute-add", "A + B", "B + A"),
+        rewrite("commute-mul", "A * B", "B * A"),
+        rewrite("add-0", "A + 0", "A"),
+        rewrite("mul-0", "A * 0", "0"),
+        rewrite("mul-1", "A * 1", "A"),
     ]
 }
 
 /// parse an expression, simplify it using egg, and pretty print it back out
 fn simplify(s: &str) -> String {
     // parse the expression, the type annotation tells it which Language to use
-    let expr: RecExpr<SimpleLanguage> = s.parse().unwrap();
+    let expr: Expr = parser::parse_expr(s).unwrap();
 
     // simplify the expression using a Runner, which creates an e-graph with
     // the given expression and runs the given rules over it
@@ -44,6 +45,6 @@ fn simplify(s: &str) -> String {
 
 #[test]
 fn simple_tests() {
-    assert_eq!(simplify("(* 0 42)"), "0");
-    assert_eq!(simplify("(+ 0 (* 1 foo))"), "foo");
+    assert_eq!(simplify("42 * 0"), "0");
+    assert_eq!(simplify("foo * 1 + 0"), "foo");
 }
