@@ -25,29 +25,29 @@ trace_rules = ["trace", "debug", "info"]
 
 [[rule]]
 name = "id"
-lhs = "x + 0"
-rhs = "x"
+lhs = "X + 0"
+rhs = "X"
 # Prevents this rule from being banned.
 protected = true
 
 [[rule]]
 name = "comm-add"
-lhs = "x + y"
-rhs = "y + x"
+lhs = "X + Y"
+rhs = "Y + X"
 # Means this rule can be used in both directions.
 bidirectional = true
 
 [[rule]]
 name = "assoc"
-lhs = "(x + y) + z"
-rhs = "x + (y + z)"
+lhs = "(X + Y) + Z"
+rhs = "X + (Y + Z)"
 bidirectional = true
 disabled = true
 
 [[rule]]
 name = "div-def"
-lhs = "x / y"
-rhs = "x * (1 / y)"
+lhs = "X / Y"
+rhs = "X * (1 / Y)"
 bidirectional = true
 # List of conditions that must be satisfied before this rule can be applied.
-conditions = ["y != 0"]
+conditions = ["Y != 0"]

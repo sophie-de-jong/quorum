@@ -1,5 +1,5 @@
-use core::num;
-use std::fmt::{self, Write};
+use std::fmt::{self, Debug, Display, Write};
+use std::hash::Hash;
 
 use egg::{Id, Language, Symbol};
 use smallvec::SmallVec;
@@ -38,7 +38,7 @@ impl Op {
             Op::Plus | Op::Minus => Some((1, 2)),
             Op::Star | Op::Slash => Some((3, 4)),
             Op::Caret => Some((8, 7)),
-            _ => None
+            _ => None,
         }
     }
 }
@@ -57,24 +57,49 @@ pub enum NodeKind {
     Function { name: Symbol },
 }
 
+impl fmt::Display for NodeKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            NodeKind::Number(num) => write!(f, "{num}"),
+            NodeKind::Symbol(sym) => write!(f, "{sym}"),
+            NodeKind::Operator(op) => write!(f, "{op}"),
+            NodeKind::Function { name } => write!(f, "{name}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct MathNode {
+pub struct Node {
     kind: NodeKind,
     children: SmallVec<[Id; 2]>,
 }
 
-impl MathNode {
-    pub fn leaf(kind: NodeKind) -> MathNode {
-        MathNode {
+impl Node {
+    pub fn new(kind: NodeKind, children: Vec<Id>) -> Node {
+        Node {
+            kind,
+            children: SmallVec::from_vec(children),
+        }
+    }
+
+    pub fn leaf(kind: NodeKind) -> Node {
+        Node {
             kind,
             children: SmallVec::new(),
         }
     }
 
-    pub fn new(kind: NodeKind, children: SmallVec<[Id; 2]>) -> MathNode {
-        MathNode {
+    pub fn unary(kind: NodeKind, arg: Id) -> Node {
+        Node {
             kind,
-            children,
+            children: SmallVec::from_buf_and_len([arg, Id::default()], 1),
+        }
+    }
+
+    pub fn binary(kind: NodeKind, l_arg: Id, r_arg: Id) -> Node {
+        Node {
+            kind,
+            children: SmallVec::from_buf([l_arg, r_arg]),
         }
     }
 
@@ -83,7 +108,7 @@ impl MathNode {
     }
 }
 
-impl Language for MathNode {
+impl Language for Node {
     type Discriminant = NodeKind;
 
     fn discriminant(&self) -> Self::Discriminant {
@@ -103,13 +128,8 @@ impl Language for MathNode {
     }
 }
 
-impl fmt::Display for MathNode {
+impl fmt::Display for Node {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.kind {
-            NodeKind::Number(num) => write!(f, "{num}"),
-            NodeKind::Symbol(sym) => write!(f, "{sym}"),
-            NodeKind::Operator(op) => write!(f, "{op}"),
-            NodeKind::Function { name } => write!(f, "{name}"),
-        }
+        Display::fmt(&self.kind, f)
     }
 }
