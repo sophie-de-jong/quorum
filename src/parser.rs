@@ -1,7 +1,7 @@
 use std::iter::Peekable;
 use std::str::Chars;
 
-use crate::math::{Node, NodeKind, Op};
+use crate::math::{Math, Op};
 use egg::{ENodeOrVar, Id, PatternAst, Symbol, Var};
 use thiserror::Error;
 
@@ -29,6 +29,7 @@ pub enum Token {
     Op(Op),
     LParen,
     RParen,
+    Comma,
 }
 
 pub fn scan_token<'i>(chars: &mut Peekable<Chars<'i>>) -> Result<Option<Token>, ParseError> {
@@ -37,11 +38,12 @@ pub fn scan_token<'i>(chars: &mut Peekable<Chars<'i>>) -> Result<Option<Token>, 
     let token = match chars.next() {
         None => None,
         Some(first) => match first {
-            '+' => Some(Token::Op(Op::Plus)),
-            '-' => Some(Token::Op(Op::Minus)),
-            '*' => Some(Token::Op(Op::Star)),
-            '/' => Some(Token::Op(Op::Slash)),
-            '^' => Some(Token::Op(Op::Caret)),
+            '+' => Some(Token::Op(Op::Add)),
+            '-' => Some(Token::Op(Op::Sub)),
+            '*' => Some(Token::Op(Op::Mul)),
+            '/' => Some(Token::Op(Op::Div)),
+            '^' => Some(Token::Op(Op::Pow)),
+            ',' => Some(Token::Comma),
             '(' => Some(Token::LParen),
             ')' => Some(Token::RParen),
             a if a.is_alphabetic() && a.is_lowercase() => {
@@ -88,46 +90,56 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, ParseError> {
     Ok(tokens)
 }
 
-pub type Expr = egg::RecExpr<Node>;
-pub type Pattern = egg::Pattern<Node>;
+
+
+pub fn tokenize_iter(input: &str) -> impl Iterator<Item = Result<Token, ParseError>> {
+    let mut chars = input.chars().peekable();
+
+    std::iter::from_fn(move || {
+        scan_token(&mut chars).transpose()
+    })
+}
+
+pub type Expr = egg::RecExpr<Math>;
+pub type Pattern = egg::Pattern<Math>;
 type TokenIter = Peekable<std::vec::IntoIter<Token>>;
 
 /// Parse a string into a `Pattern`.
-/// 
+///
 /// The resulting `Pattern` can be used as either the left-hand or
 /// right-hand side of a rewrite rule.
-/// 
+///
 /// # Errors
-/// 
-/// Returns a `ParseError` if the input contains unexpected tokens, 
+///
+/// Returns a `ParseError` if the input contains unexpected tokens,
 /// unbalanced parentheses, or other syntax errors.
 pub fn parse_pattern(input: &str) -> Result<Pattern, ParseError> {
     let mut tokens = tokenize(input)?.into_iter().peekable();
     let mut ast = PatternAst::default();
-    parse_inner(&mut tokens, &mut ast, 0)?;
+    parse_pratt(&mut tokens, &mut ast, 0)?;
     Ok(Pattern::new(ast))
 }
 
 /// Parse a string into an `Expr`.
-/// 
+///
 /// An expression is similar to a pattern, except it cannot contain any
 /// pattern variables. This produces a concrete expression tree that can
 /// be added to an e-graph.
-/// 
+///
 /// # Errors
-/// 
+///
 /// Returns a `ParseError` if the input is malformed or if a pattern
 /// variable is encountered.
 pub fn parse_expr(input: &str) -> Result<Expr, ParseError> {
     let mut tokens = tokenize(input)?.into_iter().peekable();
     let mut ast = PatternAst::default();
-    parse_inner(&mut tokens, &mut ast, 0)?;
+    parse_pratt(&mut tokens, &mut ast, 0)?;
     ast.try_into().map_err(ParseError::VariableInExpr)
 }
 
-fn parse_inner(
+fn parse_pratt(
     tokens: &mut TokenIter,
-    ast: &mut PatternAst<Node>,
+    ast: &mut PatternAst<Math>,
     min_bp: u8,
 ) -> Result<Id, ParseError> {
     use Token as T;
@@ -135,19 +147,37 @@ fn parse_inner(
     let mut lhs = match tokens.next() {
         // Number literal.
         Some(T::Num(num)) => {
-            let node = Node::leaf(NodeKind::Number(num));
+            let node = Math::Num(num);
             ast.add(ENodeOrVar::ENode(node))
         }
-        // Identifier.
+        // Identifier or function call.
         Some(T::Ident(sym)) => {
-            let node = Node::leaf(NodeKind::Symbol(sym.into()));
+            let node = if let Some(&T::LParen) = tokens.peek() {
+                tokens.next(); // Skip '('
+
+                let mut args = Vec::new();
+                loop {
+                    let arg = parse_pratt(tokens, ast, 0)?;
+                    args.push(arg);
+                    match tokens.next() {
+                        Some(T::Comma) => (),
+                        Some(T::RParen) => break,
+                        Some(t) => return Err(ParseError::UnexpectedToken(t)),
+                        None => return Err(ParseError::UnexpectedEof),
+                    }
+                }
+                Math::Fn(sym.into(), args)
+            } else {
+                Math::Sym(sym.into())
+            };
+
             ast.add(ENodeOrVar::ENode(node))
         }
         // Variable (part of a pattern).
         Some(T::Var(var)) => ast.add(ENodeOrVar::Var(var)),
         // Parenthesized sub-expression: recurse, then expect ')'.
         Some(T::LParen) => {
-            let lhs = parse_inner(tokens, ast, 0)?;
+            let lhs = parse_pratt(tokens, ast, 0)?;
             match tokens.next() {
                 Some(T::RParen) => lhs,
                 Some(t) => return Err(ParseError::UnexpectedToken(t)),
@@ -156,11 +186,11 @@ fn parse_inner(
         }
         // Prefix operator: parse its operand recursively.
         Some(T::Op(op)) => {
-            let r_bp = op
-                .prefix_binding_power()
+            let prec = op
+                .prefix_prec()
                 .ok_or(ParseError::InvalidPrefixOp(op))?;
-            let arg = parse_inner(tokens, ast, r_bp)?;
-            let node = Node::unary(NodeKind::Operator(op), arg);
+            let arg = parse_pratt(tokens, ast, prec.left_bp())?;
+            let node = Math::from_unary_op(op, arg).unwrap();
             ast.add(ENodeOrVar::ENode(node))
         }
         // Error cases.
@@ -174,21 +204,24 @@ fn parse_inner(
         let op = match tokens.peek() {
             Some(T::Op(op)) => *op,
             Some(T::RParen) | None => break,
-            Some(_) => return Err(ParseError::UnexpectedToken(tokens.next().unwrap())),
+            Some(_) => {
+                let t = tokens.next().unwrap();
+                return Err(ParseError::UnexpectedToken(t))
+            },
         };
 
-        let (l_bp, r_bp) = op
-        .infix_binding_power()
-        .ok_or(ParseError::InvalidInfixOp(op))?;
+        let prec = op
+            .infix_prec()
+            .ok_or(ParseError::InvalidInfixOp(op))?;
         // If the precedence is too low, return control to caller.
-        if l_bp < min_bp {
+        if prec.left_bp() < min_bp {
             break;
         }
         tokens.next();
 
         // Parse the right-hand side with the right binding power.
-        let rhs = parse_inner(tokens, ast, r_bp)?;
-        let node = Node::binary(NodeKind::Operator(op), lhs, rhs);
+        let rhs = parse_pratt(tokens, ast, prec.right_bp())?;
+        let node = Math::from_binary_op(op, lhs, rhs).unwrap();
 
         // Update lhs to the new combined binary expression.
         lhs = ast.add(ENodeOrVar::ENode(node))
@@ -262,5 +295,11 @@ mod test {
     fn parse_complex_pattern() {
         let p = parse_pattern("A + B * c * D + E").unwrap();
         assert_eq!(p.to_string(), "(+ (+ A (* (* B c) D)) E)");
+    }
+
+    #[test]
+    fn parse_function() {
+        let s = parse_expr("sin(x) + max(x, y)").unwrap();
+        assert_eq!(s.to_string(), "(+ (sin x) (max x y))")
     }
 }

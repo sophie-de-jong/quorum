@@ -27,8 +27,8 @@ pub struct Rule<'s> {
     pub protected: bool,
     #[serde(default)]
     pub disabled: bool,
-    #[serde(default)]
-    pub conditions: Vec<String>,
+    #[serde(borrow, default)]
+    pub condition: Cow<'s, str>,
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -82,17 +82,9 @@ impl Default for Cost {
     }
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Default, Deserialize, PartialEq)]
 pub struct Logging {
     pub trace_rules: Vec<String>,
-}
-
-impl Default for Logging {
-    fn default() -> Self {
-        Logging {
-            trace_rules: Vec::new(),
-        }
-    }
 }
 
 #[cfg(test)]
