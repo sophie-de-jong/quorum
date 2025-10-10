@@ -1,62 +1,49 @@
-use std::backtrace;
 use std::fmt::{self, Debug, Write};
 use std::hash::Hash;
 
-use egg::{define_language, Analysis, EGraph, Id, Language, Symbol};
+use egg::{Analysis, EGraph, Id, Symbol, define_language};
 use thiserror::Error;
 
-const fn checked_exact_div(lhs: i64, rhs: i64) -> Option<i64> {
-    match lhs.checked_rem(rhs) {
-        Some(n) if n != 0 => Some(lhs / rhs),
-        _ => None
-    }
-} 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Precedence {
-    level: u8,
-    assoc: Assoc,
+pub enum Assoc {
+    Left,
+    Right,
+    Both,
 }
 
-impl Ord for Precedence {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.level.cmp(&other.level)
-    }
-}
-
-impl PartialOrd for Precedence {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Precedence {
+    Add,
+    Mul,
+    Neg,
+    Pow,
 }
 
 impl Precedence {
-    pub const ROOT: Precedence = Precedence { level: 0, assoc: Assoc::None };
-    pub const ADD_SUB: Precedence = Precedence { level: 10, assoc: Assoc::Left };
-    pub const MUL_DIV: Precedence = Precedence { level: 20, assoc: Assoc::Left };
-    pub const PREFIX: Precedence = Precedence { level: 30, assoc: Assoc::None };
-    pub const POW: Precedence = Precedence { level: 40, assoc: Assoc::Right };
-
-    pub fn assoc(self) -> Assoc {
-        self.assoc
-    }
+    // Binding power.
+    // See https://matklad.github.io/2020/04/13/simple-but-powerful-pratt-parsing.html
+    const ADD_BP: u8 = 10;
+    const MUL_BP: u8 = 20;
+    const NEG_BP: u8 = 30;
+    const POW_BP: u8 = 40;
 
     pub fn left_bp(self) -> u8 {
-        self.level
+        match self {
+            Precedence::Add => Self::ADD_BP,
+            Precedence::Mul => Self::MUL_BP,
+            Precedence::Neg => Self::NEG_BP,
+            Precedence::Pow => Self::POW_BP,
+        }
     }
 
     pub fn right_bp(self) -> u8 {
-        self.level.wrapping_add_signed(self.assoc as i8)
+        match self {
+            Precedence::Add => Self::ADD_BP + 1, // left-associative
+            Precedence::Mul => Self::MUL_BP + 1, // left-associative
+            Precedence::Neg => Self::NEG_BP,
+            Precedence::Pow => Self::POW_BP - 1, // right-associative
+        }
     }
-}
-
-
-#[repr(i8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Assoc {
-    Left = 1,
-    None = 0,
-    Right = -1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -81,18 +68,26 @@ impl Op {
         }
     }
 
-    pub fn prefix_prec(self) -> Option<Precedence> {
+    pub fn assoc(self) -> Assoc {
         match self {
-            Op::Sub => Some(Precedence::PREFIX),
-            _ => None,
+            Op::Add | Op::Mul | Op::Rem => Assoc::Both,
+            Op::Sub | Op::Div => Assoc::Left,
+            Op::Pow => Assoc::Right,
         }
     }
 
-    pub fn infix_prec(self) -> Option<Precedence> {
+    pub fn precedence(self) -> Precedence {
         match self {
-            Op::Add | Op::Sub => Some(Precedence::ADD_SUB),
-            Op::Mul | Op::Div | Op::Rem => Some(Precedence::MUL_DIV),
-            Op::Pow => Some(Precedence::POW),
+            Op::Add | Op::Sub => Precedence::Add,
+            Op::Mul | Op::Div | Op::Rem => Precedence::Mul,
+            Op::Pow => Precedence::Pow,
+        }
+    }
+
+    pub fn prefix_precedence(self) -> Option<Precedence> {
+        match self {
+            Op::Sub => Some(Precedence::Neg),
+            _ => None,
         }
     }
 }
@@ -128,9 +123,9 @@ define_language! {
 impl Math {
     pub fn from_binary_op(op: Op, lhs: Id, rhs: Id) -> Option<Math> {
         match op {
-            Op::Add  => Some(Math::Add([lhs, rhs])),
+            Op::Add => Some(Math::Add([lhs, rhs])),
             Op::Sub => Some(Math::Sub([lhs, rhs])),
-            Op::Mul  => Some(Math::Mul([lhs, rhs])),
+            Op::Mul => Some(Math::Mul([lhs, rhs])),
             Op::Div => Some(Math::Div([lhs, rhs])),
             Op::Rem => Some(Math::Rem([lhs, rhs])),
             Op::Pow => Some(Math::Pow([lhs, rhs])),
@@ -140,7 +135,7 @@ impl Math {
     pub fn from_unary_op(op: Op, arg: Id) -> Option<Math> {
         match op {
             Op::Sub => Some(Math::Neg(arg)),
-            _ => None
+            _ => None,
         }
     }
 }
@@ -150,7 +145,7 @@ pub enum ArithmeticError {
     #[error("division by zero")]
     DivisionByZero,
     #[error("overflow")]
-    Overflow
+    Overflow,
 }
 
 pub struct ConstantFolding;
@@ -171,8 +166,8 @@ impl Analysis<Math> for ConstantFolding {
             Math::Rem([a, b]) => Some(x(a)? % x(b)?),
             Math::Pow([a, b]) => match u32::try_from(x(b)?) {
                 Ok(b) => Some(x(a)?.pow(b)),
-                Err(_) => None
-            }
+                Err(_) => None,
+            },
             Math::Neg(a) => Some(-x(a)?),
             Math::Num(n) => Some(*n),
             Math::Sym(..) | Math::Fn(..) => None,

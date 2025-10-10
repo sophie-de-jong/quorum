@@ -1,3 +1,4 @@
+use std::fmt;
 use std::iter::Peekable;
 use std::str::Chars;
 
@@ -9,8 +10,8 @@ use thiserror::Error;
 pub enum ParseError {
     #[error("unexpected end of file")]
     UnexpectedEof,
-    #[error("unexpected char: {0:?}")]
-    UnexpectedChar(char),
+    #[error("invalid character: {0:?}")]
+    InvalidChar(char),
     #[error("unexpected token: {0:?}")]
     UnexpectedToken(Token),
     #[error("variable in expression: {0:?}")]
@@ -24,7 +25,7 @@ pub enum ParseError {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Token {
     Num(i64),
-    Ident(String),
+    Ident(Symbol),
     Var(Var),
     Op(Op),
     LParen,
@@ -32,7 +33,24 @@ pub enum Token {
     Comma,
 }
 
-pub fn scan_token<'i>(chars: &mut Peekable<Chars<'i>>) -> Result<Option<Token>, ParseError> {
+impl fmt::Display for Token {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Token::Num(num) => write!(f, "a number: `{num}`"),
+            Token::Ident(ident) => write!(f, "an identifier: `{ident}`"),
+            Token::Var(var) => write!(f, "a variable: `{var}`"),
+            Token::Op(op) => write!(f, "an operator: `{op}`"),
+            Token::LParen => write!(f, "`(`"),
+            Token::RParen => write!(f, "`)`"),
+            Token::Comma => write!(f, "`,`"),
+        }
+    }
+}
+
+fn scan_token<'a>(
+    chars: &mut Peekable<Chars<'a>>,
+    buf: &mut String,
+) -> Result<Option<Token>, ParseError> {
     while chars.next_if(|c| c.is_whitespace()).is_some() {}
 
     let token = match chars.next() {
@@ -46,58 +64,47 @@ pub fn scan_token<'i>(chars: &mut Peekable<Chars<'i>>) -> Result<Option<Token>, 
             ',' => Some(Token::Comma),
             '(' => Some(Token::LParen),
             ')' => Some(Token::RParen),
-            a if a.is_alphabetic() && a.is_lowercase() => {
-                let mut ident = String::new();
-                ident.push(a);
+            a if a.is_ascii_alphabetic() && a.is_lowercase() => {
+                buf.push(a);
                 while let Some(a) =
                     chars.next_if(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '_')
                 {
-                    ident.push(a);
+                    buf.push(a);
                 }
-                Some(Token::Ident(ident))
+                Some(Token::Ident(Symbol::new(buf)))
             }
-            a if a.is_alphabetic() && a.is_uppercase() => {
-                let mut var = String::new();
-                var.push(a);
+            a if a.is_ascii_alphabetic() && a.is_uppercase() => {
+                buf.push(a);
                 while let Some(a) =
                     chars.next_if(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || *c == '_')
                 {
-                    var.push(a);
+                    buf.push(a);
                 }
-                Some(Token::Var(Var::from(Symbol::from(var))))
+                Some(Token::Var(Var::from(Symbol::new(buf))))
             }
             d if d.is_ascii_digit() => {
-                let mut num = String::new();
-                num.push(d);
+                buf.push(d);
                 while let Some(d) = chars.next_if(|c| c.is_ascii_digit()) {
-                    num.push(d);
+                    buf.push(d);
                 }
-                Some(Token::Num(num.parse().unwrap()))
+                Some(Token::Num(buf.parse().unwrap()))
             }
-            bad_char => return Err(ParseError::UnexpectedChar(bad_char)),
+            bad_char => return Err(ParseError::InvalidChar(bad_char)),
         },
     };
     Ok(token)
 }
 
-pub fn tokenize(input: &str) -> Result<Vec<Token>, ParseError> {
+fn tokenize(input: &str) -> Result<Vec<Token>, ParseError> {
     let mut chars = input.chars().peekable();
+    let mut buf = String::new();
     let mut tokens = Vec::new();
 
-    while let Some(token) = scan_token(&mut chars)? {
+    while let Some(token) = scan_token(&mut chars, &mut buf)? {
+        buf.clear();
         tokens.push(token);
     }
     Ok(tokens)
-}
-
-
-
-pub fn tokenize_iter(input: &str) -> impl Iterator<Item = Result<Token, ParseError>> {
-    let mut chars = input.chars().peekable();
-
-    std::iter::from_fn(move || {
-        scan_token(&mut chars).transpose()
-    })
 }
 
 pub type Expr = egg::RecExpr<Math>;
@@ -166,9 +173,9 @@ fn parse_pratt(
                         None => return Err(ParseError::UnexpectedEof),
                     }
                 }
-                Math::Fn(sym.into(), args)
+                Math::Fn(sym, args)
             } else {
-                Math::Sym(sym.into())
+                Math::Sym(sym)
             };
 
             ast.add(ENodeOrVar::ENode(node))
@@ -187,9 +194,9 @@ fn parse_pratt(
         // Prefix operator: parse its operand recursively.
         Some(T::Op(op)) => {
             let prec = op
-                .prefix_prec()
+                .prefix_precedence()
                 .ok_or(ParseError::InvalidPrefixOp(op))?;
-            let arg = parse_pratt(tokens, ast, prec.left_bp())?;
+            let arg = parse_pratt(tokens, ast, prec.right_bp())?;
             let node = Math::from_unary_op(op, arg).unwrap();
             ast.add(ENodeOrVar::ENode(node))
         }
@@ -203,16 +210,14 @@ fn parse_pratt(
         // either an exit case or a fail case.
         let op = match tokens.peek() {
             Some(T::Op(op)) => *op,
-            Some(T::RParen) | None => break,
+            Some(T::RParen) | Some(T::Comma) | None => break,
             Some(_) => {
                 let t = tokens.next().unwrap();
-                return Err(ParseError::UnexpectedToken(t))
-            },
+                return Err(ParseError::UnexpectedToken(t));
+            }
         };
 
-        let prec = op
-            .infix_prec()
-            .ok_or(ParseError::InvalidInfixOp(op))?;
+        let prec = op.precedence();
         // If the precedence is too low, return control to caller.
         if prec.left_bp() < min_bp {
             break;

@@ -1,13 +1,12 @@
 mod config_parse;
+pub mod fmt;
 mod math;
 mod parallel_scheduler;
 pub mod parser;
-pub mod fmt;
 
 use egg::*;
-use rayon::ThreadPoolBuilder;
 
-use crate::math::{Math, ConstantFolding};
+use crate::math::{ConstantFolding, Math};
 use crate::parallel_scheduler::ParallelBackoffScheduler;
 use crate::parser::Expr;
 
@@ -25,7 +24,7 @@ fn rules() -> Vec<Rewrite<Math, ConstantFolding>> {
         rewrite("mul-0", "A * 0", "0"),
         rewrite("mul-1", "A * 1", "A"),
         rewrite("distr", "A * (B + C)", "A * B + A * C"),
-        rewrite("assoc", "A + (B + C)", "(A + B) + C")
+        rewrite("assoc", "A + (B + C)", "(A + B) + C"),
     ]
 }
 

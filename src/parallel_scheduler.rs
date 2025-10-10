@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use dashmap::{DashMap};
+use dashmap::DashMap;
 use egg::*;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
