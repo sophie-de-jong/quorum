@@ -24,7 +24,8 @@ fn rules() -> Vec<Rewrite<Math, ConstantFolding>> {
         rewrite("mul-0", "A * 0", "0"),
         rewrite("mul-1", "A * 1", "A"),
         rewrite("distr", "A * (B + C)", "A * B + A * C"),
-        rewrite("assoc", "A + (B + C)", "(A + B) + C"),
+        rewrite("assoc-add", "A + (B + C)", "(A + B) + C"),
+        rewrite("assoc-sub", "A - (B - C)", "(A - B) - C"),
     ]
 }
 

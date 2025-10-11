@@ -2,7 +2,7 @@ use std::fmt::{self, Debug, Write};
 use std::hash::Hash;
 
 use egg::{Analysis, EGraph, Id, Symbol, define_language};
-use thiserror::Error;
+//use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Assoc {
@@ -140,13 +140,13 @@ impl Math {
     }
 }
 
-#[derive(Debug, Error)]
-pub enum ArithmeticError {
-    #[error("division by zero")]
-    DivisionByZero,
-    #[error("overflow")]
-    Overflow,
-}
+// #[derive(Debug, Error)]
+// pub enum ArithmeticError {
+//     #[error("division by zero")]
+//     DivisionByZero,
+//     #[error("overflow")]
+//     Overflow,
+// }
 
 pub struct ConstantFolding;
 impl Analysis<Math> for ConstantFolding {

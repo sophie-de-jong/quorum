@@ -1,10 +1,9 @@
-use std::cell::Cell;
 use std::cmp::Ordering;
 use std::fmt::{self, Write};
 
 use egg::Id;
 
-use crate::math::{Assoc, Math, Op, Precedence};
+use crate::math::{Assoc, Math, Op};
 use crate::parser::Expr;
 
 pub trait DisplayExpr {
@@ -21,7 +20,6 @@ impl DisplayExpr for Expr {
     fn display_subexpr<'a>(&'a self, id: Id) -> Display<'a> {
         Display {
             expr: self,
-            prec: Cell::new(Precedence::Add),
             root: id,
         }
     }
@@ -29,7 +27,6 @@ impl DisplayExpr for Expr {
 
 pub struct Display<'a> {
     expr: &'a Expr,
-    prec: Cell<Precedence>,
     root: Id,
 }
 
