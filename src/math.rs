@@ -1,8 +1,8 @@
-use std::fmt::{self, Debug, Write};
+use std::fmt::{self, Debug};
 use std::hash::Hash;
 
 use egg::{Analysis, EGraph, Id, Symbol, define_language};
-//use thiserror::Error;
+use crate::arith::{self, ArithmeticError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Assoc {
@@ -50,21 +50,28 @@ impl Precedence {
 pub enum Op {
     Add,
     Sub,
+    Rem,
     Mul,
     Div,
-    Rem,
     Pow,
 }
 
 impl Op {
-    pub fn as_char(self) -> char {
+    pub fn as_str(self) -> &'static str {
         match self {
-            Op::Add => '+',
-            Op::Sub => '-',
-            Op::Mul => '*',
-            Op::Div => '/',
-            Op::Rem => '%',
-            Op::Pow => '^',
+            Op::Add => " + ",
+            Op::Sub => " - ",
+            Op::Rem => " % ",
+            Op::Mul => "*",
+            Op::Div => "/",
+            Op::Pow => "^",
+        }
+    }
+
+    pub fn as_str_prefix(&self) -> &'static str {
+        match self {
+            Op::Sub => "-",
+            _ => panic!("tried to get a prefix str from a non prefix operator"),
         }
     }
 
@@ -94,7 +101,14 @@ impl Op {
 
 impl fmt::Display for Op {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_char(self.as_char())
+        match self {
+            Op::Add => write!(f, " + "),
+            Op::Sub => write!(f, " - "),
+            Op::Rem => write!(f, " % "),
+            Op::Mul => write!(f, "*"),
+            Op::Div => write!(f, "/"),
+            Op::Pow => write!(f, "^"),
+        }
     }
 }
 
@@ -103,16 +117,16 @@ define_language! {
         // Binary operators
         "+" = Add([Id; 2]),
         "-" = Sub([Id; 2]),
+        "%" = Rem([Id; 2]),
         "*" = Mul([Id; 2]),
         "/" = Div([Id; 2]),
-        "%" = Rem([Id; 2]),
         "^" = Pow([Id; 2]),
 
         // Unary operators
         "-" = Neg(Id),
 
         // Leaves
-        Num(i64),
+        Num(u64),
         Sym(Symbol),
 
         // Other
@@ -140,43 +154,74 @@ impl Math {
     }
 }
 
-// #[derive(Debug, Error)]
-// pub enum ArithmeticError {
-//     #[error("division by zero")]
-//     DivisionByZero,
-//     #[error("overflow")]
-//     Overflow,
-// }
+fn combine_binary<F: FnOnce(i64, i64) -> Result<i64, ArithmeticError>>(
+    lhs: Result<i64, ArithmeticError>,
+    rhs: Result<i64, ArithmeticError>,
+    f: F
+) -> Result<i64, ArithmeticError> {
+    match (lhs, rhs) {
+        (Err(err), _) => Err(err),
+        (_, Err(err)) => Err(err),
+        (Ok(lhs), Ok(rhs)) => f(lhs, rhs)
+    }
+}
 
-pub struct ConstantFolding;
+fn combine_unary<F: FnOnce(i64) -> Result<i64, ArithmeticError>>(
+    rhs: Result<i64, ArithmeticError>,
+    f: F
+) -> Result<i64, ArithmeticError> {
+    match rhs {
+        Err(err) => Err(err),
+        Ok(rhs) => f(rhs)
+    }
+}
+
+pub struct ConstantFolding {
+    pub error: Option<ArithmeticError>
+}
+
 impl Analysis<Math> for ConstantFolding {
     type Data = Option<i64>;
 
     fn merge(&mut self, to: &mut Self::Data, from: Self::Data) -> egg::DidMerge {
-        egg::merge_max(to, from)
+        let changed = if to.is_none() && from.is_some() {
+            *to = from;
+            true
+        } else {
+            false
+        };
+        egg::DidMerge(changed, false)
     }
 
     fn make(egraph: &mut EGraph<Math, Self>, enode: &Math, _: Id) -> Self::Data {
-        let x = |i: &Id| egraph[*i].data;
-        match enode {
-            Math::Add([a, b]) => Some(x(a)? + x(b)?),
-            Math::Sub([a, b]) => Some(x(a)? - x(b)?),
-            Math::Mul([a, b]) => Some(x(a)? * x(b)?),
-            Math::Div([a, b]) => Some(x(a)? / x(b)?),
-            Math::Rem([a, b]) => Some(x(a)? % x(b)?),
-            Math::Pow([a, b]) => match u32::try_from(x(b)?) {
-                Ok(b) => Some(x(a)?.pow(b)),
-                Err(_) => None,
-            },
-            Math::Neg(a) => Some(-x(a)?),
-            Math::Num(n) => Some(*n),
-            Math::Sym(..) | Math::Fn(..) => None,
+        let data = |i: &Id| egraph[*i].data;
+        let result = match enode {
+            Math::Add([a, b]) => arith::add(data(a)?, data(b)?),
+            Math::Sub([a, b]) => arith::sub(data(a)?, data(b)?),
+            Math::Mul([a, b]) => arith::mul(data(a)?, data(b)?),
+            Math::Div([a, b]) => arith::div(data(a)?, data(b)?),
+            Math::Rem([a, b]) => arith::rem(data(a)?, data(b)?),
+            Math::Pow([a, b]) => arith::pow(data(a)?, data(b)?),
+            Math::Neg(a) => arith::neg(data(a)?),
+            Math::Num(n) => i64::try_from(*n).map_err(|_| ArithmeticError::Overflow),
+            Math::Sym(..) | Math::Fn(..) => return None,
+        };
+
+        match result {
+            Ok(n) => Some(n),
+            Err(err) => {
+                self
+            }
         }
     }
 
     fn modify(egraph: &mut EGraph<Math, Self>, id: Id) {
-        if let Some(n) = egraph[id].data {
-            let added = egraph.add(Math::Num(n));
+        if let Some(Ok(n)) = egraph[id].data {
+            let mut added = egraph.add(Math::Num(n.unsigned_abs()));
+
+            if n.is_negative() {
+                added = egraph.add(Math::Neg(added))
+            }
             egraph.union(id, added);
         }
     }

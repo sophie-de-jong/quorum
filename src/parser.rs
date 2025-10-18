@@ -5,6 +5,7 @@ use std::str::Chars;
 use crate::math::{Math, Op};
 use egg::{ENodeOrVar, Id, PatternAst, Symbol, Var};
 use thiserror::Error;
+use unicode_xid::UnicodeXID;
 
 #[derive(Error, Debug)]
 pub enum ParseError {
@@ -20,11 +21,13 @@ pub enum ParseError {
     InvalidPrefixOp(Op),
     #[error("invalid infix operator: {0:?}")]
     InvalidInfixOp(Op),
+    #[error("integer overflow (too large)")]
+    IntegerOverflow,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Token {
-    Num(i64),
+    Num(u64),
     Ident(Symbol),
     Var(Var),
     Op(Op),
@@ -47,6 +50,32 @@ impl fmt::Display for Token {
     }
 }
 
+fn is_id_start(c: char) -> bool {
+    c.is_xid_start() && c.is_lowercase()
+}
+
+fn is_id_continue(c: char) -> bool {
+    (c.is_xid_continue() && c.is_lowercase()) || c == '_'
+}
+
+fn is_var_start(c: char) -> bool {
+    c.is_xid_start() && c.is_uppercase()
+}
+
+fn is_var_continue(c: char) -> bool {
+    (c.is_xid_continue() && c.is_uppercase()) || c == '_'
+}
+
+fn fill_buf_while<'a, F: FnMut(char) -> bool>(
+    chars: &mut Peekable<Chars<'a>>,
+    buf: &mut String,
+    mut f: F,
+) {
+    while let Some(c) = chars.next_if(|&c| f(c)) {
+        buf.push(c);
+    }
+}
+
 fn scan_token<'a>(
     chars: &mut Peekable<Chars<'a>>,
     buf: &mut String,
@@ -58,36 +87,32 @@ fn scan_token<'a>(
         Some(first) => match first {
             '+' => Some(Token::Op(Op::Add)),
             '-' => Some(Token::Op(Op::Sub)),
+            '%' => Some(Token::Op(Op::Rem)),
             '*' => Some(Token::Op(Op::Mul)),
             '/' => Some(Token::Op(Op::Div)),
             '^' => Some(Token::Op(Op::Pow)),
             ',' => Some(Token::Comma),
             '(' => Some(Token::LParen),
             ')' => Some(Token::RParen),
-            a if a.is_ascii_alphabetic() && a.is_lowercase() => {
+            a if is_id_start(a) => {
                 buf.push(a);
-                while let Some(a) =
-                    chars.next_if(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '_')
-                {
-                    buf.push(a);
-                }
+                fill_buf_while(chars, buf, is_id_continue);
                 Some(Token::Ident(Symbol::new(buf)))
             }
-            a if a.is_ascii_alphabetic() && a.is_uppercase() => {
+            a if is_var_start(a) => {
                 buf.push(a);
-                while let Some(a) =
-                    chars.next_if(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || *c == '_')
-                {
-                    buf.push(a);
-                }
+                fill_buf_while(chars, buf, is_var_continue);
                 Some(Token::Var(Var::from(Symbol::new(buf))))
             }
             d if d.is_ascii_digit() => {
                 buf.push(d);
-                while let Some(d) = chars.next_if(|c| c.is_ascii_digit()) {
-                    buf.push(d);
+                fill_buf_while(chars, buf, |c| c.is_ascii_digit());
+                match buf.parse::<i64>() {
+                    // We parse as an `i64` and cast to a `u64` because computation is done using
+                    // `i64` and we don't want to have a panic overflow.
+                    Ok(num) => Some(Token::Num(num as u64)),
+                    Err(_) => return Err(ParseError::IntegerOverflow),
                 }
-                Some(Token::Num(buf.parse().unwrap()))
             }
             bad_char => return Err(ParseError::InvalidChar(bad_char)),
         },

@@ -9,6 +9,7 @@ fn main() -> io::Result<()> {
         print!("quorum> ");
         io::stdout().flush()?;
 
+        line.clear();
         if io::stdin().read_line(&mut line)? == 0 {
             break;
         }
@@ -21,10 +22,9 @@ fn main() -> io::Result<()> {
             }
         };
 
-        let simplified = quorum::simplify(expr);
-        println!("=> {}", simplified.display());
-
-        line.clear();
+        if let Some(simplified) = quorum::simplify(expr) {
+            println!("=> {}", simplified.display());
+        }
     }
 
     Ok(())
