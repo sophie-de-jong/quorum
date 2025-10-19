@@ -1,8 +1,8 @@
 use std::fmt::{self, Debug};
 use std::hash::Hash;
 
-use egg::{Analysis, EGraph, Id, Symbol, define_language};
-use crate::arith::{self, ArithmeticError};
+use egg::{define_language, Analysis, EGraph, Id, Language, Symbol};
+use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Assoc {
@@ -154,75 +154,138 @@ impl Math {
     }
 }
 
-fn combine_binary<F: FnOnce(i64, i64) -> Result<i64, ArithmeticError>>(
-    lhs: Result<i64, ArithmeticError>,
-    rhs: Result<i64, ArithmeticError>,
-    f: F
-) -> Result<i64, ArithmeticError> {
-    match (lhs, rhs) {
-        (Err(err), _) => Err(err),
-        (_, Err(err)) => Err(err),
-        (Ok(lhs), Ok(rhs)) => f(lhs, rhs)
-    }
+#[derive(Debug, Error, Clone, Copy)]
+pub enum ArithmeticError {
+    #[error("division by zero")]
+    DivisionByZero,
+    #[error("overflow")]
+    Overflow,
 }
 
-fn combine_unary<F: FnOnce(i64) -> Result<i64, ArithmeticError>>(
-    rhs: Result<i64, ArithmeticError>,
-    f: F
-) -> Result<i64, ArithmeticError> {
-    match rhs {
-        Err(err) => Err(err),
-        Ok(rhs) => f(rhs)
-    }
-}
-
+#[derive(Default)]
 pub struct ConstantFolding {
     pub error: Option<ArithmeticError>
+}
+
+impl ConstantFolding {
+    pub fn report_err(&mut self, err: ArithmeticError) {
+        if self.error.is_none() {
+            self.error = Some(err)
+        }
+    }
+
+    pub fn report_err_if(&mut self, opt: Option<i64>, err: ArithmeticError) -> Option<i64> {
+        if let Some(n) = opt {
+            Some(n)
+        } else {
+            self.report_err(err);
+            None
+        }
+    }
+
+    pub fn num(&mut self, num: u64) -> Option<i64> {
+        self.report_err_if(i64::try_from(num).ok(), ArithmeticError::Overflow)
+    }
+
+    pub fn add(&mut self, lhs: i64, rhs: i64) -> Option<i64> {
+        self.report_err_if(lhs.checked_add(rhs), ArithmeticError::Overflow)
+    }
+
+    pub fn sub(&mut self, lhs: i64, rhs: i64) -> Option<i64> {
+        self.report_err_if(lhs.checked_sub(rhs), ArithmeticError::Overflow)
+    }
+
+    pub fn mul(&mut self, lhs: i64, rhs: i64) -> Option<i64> {
+        self.report_err_if(lhs.checked_mul(rhs), ArithmeticError::Overflow)
+    }
+
+    pub fn div(&mut self, lhs: i64, rhs: i64) -> Option<i64> {
+        if rhs != 0 {
+            self.report_err_if(lhs.checked_div(rhs), ArithmeticError::Overflow)
+        } else {
+            self.report_err(ArithmeticError::DivisionByZero);
+            None
+        }
+    }
+
+    pub fn rem(&mut self, lhs: i64, rhs: i64) -> Option<i64> {
+        if rhs != 0 {
+            self.report_err_if(lhs.checked_rem(rhs), ArithmeticError::Overflow)
+        } else {
+            self.report_err(ArithmeticError::DivisionByZero);
+            None
+        }
+    }
+
+    pub fn pow(&mut self, lhs: i64, rhs: i64) -> Option<i64> {
+        let result = u32::try_from(rhs).ok().and_then(|exp| lhs.checked_pow(exp));
+        self.report_err_if(result, ArithmeticError::Overflow)
+    }
+
+    pub fn neg(&mut self, rhs: i64) -> Option<i64> {
+        self.report_err_if(rhs.checked_neg(), ArithmeticError::Overflow)
+    }
 }
 
 impl Analysis<Math> for ConstantFolding {
     type Data = Option<i64>;
 
     fn merge(&mut self, to: &mut Self::Data, from: Self::Data) -> egg::DidMerge {
-        let changed = if to.is_none() && from.is_some() {
-            *to = from;
-            true
-        } else {
-            false
-        };
-        egg::DidMerge(changed, false)
+        egg::merge_option(to, from, |a, b| {
+            assert_eq!(*a, b, "merged non-equal constants");
+            egg::DidMerge(false, false)
+        })
     }
 
     fn make(egraph: &mut EGraph<Math, Self>, enode: &Math, _: Id) -> Self::Data {
-        let data = |i: &Id| egraph[*i].data;
-        let result = match enode {
-            Math::Add([a, b]) => arith::add(data(a)?, data(b)?),
-            Math::Sub([a, b]) => arith::sub(data(a)?, data(b)?),
-            Math::Mul([a, b]) => arith::mul(data(a)?, data(b)?),
-            Math::Div([a, b]) => arith::div(data(a)?, data(b)?),
-            Math::Rem([a, b]) => arith::rem(data(a)?, data(b)?),
-            Math::Pow([a, b]) => arith::pow(data(a)?, data(b)?),
-            Math::Neg(a) => arith::neg(data(a)?),
-            Math::Num(n) => i64::try_from(*n).map_err(|_| ArithmeticError::Overflow),
-            Math::Sym(..) | Math::Fn(..) => return None,
-        };
-
-        match result {
-            Ok(n) => Some(n),
-            Err(err) => {
-                self
-            }
+        match enode {
+            Math::Add([a, b]) => {
+                let (a, b) = (egraph[*a].data?, egraph[*b].data?);
+                egraph.analysis.add(a, b)
+            },
+            Math::Sub([a, b]) => {
+                let (a, b) = (egraph[*a].data?, egraph[*b].data?);
+                egraph.analysis.sub(a, b)
+            },
+            Math::Mul([a, b]) => {
+                let (a, b) = (egraph[*a].data?, egraph[*b].data?);
+                egraph.analysis.mul(a, b)
+            },
+            Math::Div([a, b]) => {
+                let (a, b) = (egraph[*a].data?, egraph[*b].data?);
+                egraph.analysis.div(a, b)
+            },
+            Math::Rem([a, b]) => {
+                let (a, b) = (egraph[*a].data?, egraph[*b].data?);
+                egraph.analysis.rem(a, b)
+            },
+            Math::Pow([a, b]) => {
+                let (a, b) = (egraph[*a].data?, egraph[*b].data?);
+                egraph.analysis.pow(a, b)
+            },
+            Math::Neg(a) => egraph.analysis.neg(egraph[*a].data?),
+            Math::Num(n) => egraph.analysis.num(*n),
+            Math::Sym(..) | Math::Fn(..) => None,
         }
     }
 
     fn modify(egraph: &mut EGraph<Math, Self>, id: Id) {
-        if let Some(Ok(n)) = egraph[id].data {
+        if let Some(n) = egraph[id].data {
             let mut added = egraph.add(Math::Num(n.unsigned_abs()));
 
             if n.is_negative() {
                 added = egraph.add(Math::Neg(added))
             }
             egraph.union(id, added);
+
+            // Prune non-leaf nodes.          
+            egraph[id].nodes.retain(|n| {
+                dbg!(n, n.is_leaf() || matches!(n, Math::Neg(_)));
+                n.is_leaf() || matches!(n, Math::Neg(_))
+            });
+
+            #[cfg(debug_assertions)]
+            egraph[id].assert_unique_leaves();
         }
     }
 }

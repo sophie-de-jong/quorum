@@ -22,8 +22,9 @@ fn main() -> io::Result<()> {
             }
         };
 
-        if let Some(simplified) = quorum::simplify(expr) {
-            println!("=> {}", simplified.display());
+        match quorum::simplify(expr) {
+            Ok(simplified) => println!("=> {}", simplified.display()),
+            Err(err) => eprintln!("{err}"),
         }
     }
 

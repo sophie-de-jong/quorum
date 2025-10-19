@@ -3,48 +3,74 @@ pub mod fmt;
 mod math;
 mod parallel_scheduler;
 pub mod parser;
-mod arith;
 
 use egg::*;
+use thiserror::Error;
 
 use crate::math::{ConstantFolding, Math};
 use crate::parallel_scheduler::ParallelBackoffScheduler;
 use crate::parser::Expr;
 
-fn rewrite(name: &str, lhs: &str, rhs: &str) -> Rewrite<Math, ConstantFolding> {
-    let lhs = parser::parse_pattern(lhs).unwrap();
-    let rhs = parser::parse_pattern(rhs).unwrap();
-    Rewrite::new(name, lhs, rhs).unwrap()
+macro_rules! rw {
+    ($name:expr; $lhs:expr => $rhs:expr) => {
+        Rewrite::new($name, pat!($lhs), pat!($rhs))
+            .expect("error while creating rewrite") 
+    };
 }
 
 fn rules() -> Vec<Rewrite<Math, ConstantFolding>> {
     vec![
-        rewrite("commute-add", "A + B", "B + A"),
-        rewrite("commute-mul", "A * B", "B * A"),
-        rewrite("add-0", "A + 0", "A"),
-        rewrite("sub-0", "A - A", "0"),
-        rewrite("mul-0", "A * 0", "0"),
-        rewrite("mul-1", "A * 1", "A"),
-        rewrite("distr", "A * (B + C)", "A * B + A * C"),
-        rewrite("assoc-add", "A + (B + C)", "(A + B) + C"),
-        rewrite("sub-def", "A - B", "A + (-B)"),
-        rewrite("sub-def-rev", "A + (-B)", "A - B"),
-        rewrite("neg-def", "-A", "(-1)*A"),
-        rewrite("neg-def-rev", "(-1)*A", "-A"),
+        // rw!("comm-add"; A + B => B + A),
+        // rw!("comm-mul"; A * B => B * A),
+        // rw!("assoc-add"; A + (B + C) => (A + B) + C),
+        // rw!("assoc-mul"; A * (B * C) => (A * B) * C),
+
+        // rw!("sub-canon"; A - B => A + (-1 * B)),
+        rw!("div-canon"; A / B => A * (B ^ -1)),
+
+        // rw!("zero-add"; A + 0 => A),
+        // rw!("zero-mul"; A * 0 => 0),
+        // rw!("one-mul";  A * 1 => A),
+
+        // rw!("add-zero"; A => A + 0),
+        // rw!("mul-one";  A => A * 1),
+
+        // rw!("cancel-sub"; A - A => 0),
+        // rw!("cancel-div"; A / A => 1),
+
+        // rw!("distribute"; A * (B + C) => (A * B) + (A * C)),
+        // rw!("factor";     (A * B) + (A * C) => A * (B + C)),
+
+        // rw!("pow-mul";       A ^ B * A ^ C => A ^ (B + C)),
+        // rw!("pow-zero";      X ^ 0 => 1),
+        // rw!("pow-one";       X ^ 1 => X),
+        // rw!("pow-two";       X ^ 2 => X * X),
+        // rw!("pow-recip";     X ^ -1 => 1 / X),
+        // rw!("recip-mul-div"; X * (1 / X) => 1),
     ]
 }
 
-pub fn simplify(expr: Expr) -> Option<Expr> {
-    let runner: Runner<Math, ConstantFolding, ()> = Runner::new(ConstantFolding)
-        .with_scheduler(ParallelBackoffScheduler::new())
+#[derive(Debug, Clone, PartialEq, Error)]
+pub enum SimplifyError {
+    #[error("hit iteration limit while simplifying: {0}")]
+    IterationLimit(usize),
+    #[error("hit node limit while simplifying: {0}")]
+    NodeLimit(usize),
+    #[error("hit time limit while simplifying: {0}")]
+    TimeLimit(f64),
+    #[error("arithmetic error: {0}")]
+    ArithmeticError(String)
+}
+
+pub fn simplify(expr: Expr) -> Result<RecExpr<Math>, SimplifyError> {
+    let runner: Runner<Math, ConstantFolding, ()> = Runner::new(ConstantFolding::default())
+        //.with_scheduler(BackoffScheduler::default())
         .with_expr(&expr)
         .with_hook(|runner| {
-            for class in runner.egraph.classes() {
-                if let Some(Err(err)) = class.data {
-                    return Err(err.to_string())
-                }
+            match runner.egraph.analysis.error {
+                None => Ok(()),
+                Some(err) => Err(err.to_string()),
             }
-            Ok(())
         })
         .run(&rules());
     
@@ -52,24 +78,12 @@ pub fn simplify(expr: Expr) -> Option<Expr> {
         Some(StopReason::Saturated) => {
             let root = runner.roots[0];
             let extractor = Extractor::new(&runner.egraph, AstSize);
-            Some(extractor.find_best(root).1)
+            Ok(extractor.find_best(root).1)
         }
-        Some(StopReason::IterationLimit(_)) => {
-            println!("hit iteration limit");
-            None
-        }
-        Some(StopReason::NodeLimit(_)) => {
-            println!("hit node limit");
-            None
-        }
-        Some(StopReason::TimeLimit(_)) => {
-            println!("hit time limit");
-            None
-        }
-        Some(StopReason::Other(s)) => {
-            println!("{s}");
-            None
-        }
+        Some(StopReason::IterationLimit(limit)) => Err(SimplifyError::IterationLimit(limit)),
+        Some(StopReason::NodeLimit(limit)) => Err(SimplifyError::NodeLimit(limit)),
+        Some(StopReason::TimeLimit(limit)) => Err(SimplifyError::TimeLimit(limit)),
+        Some(StopReason::Other(s)) => Err(SimplifyError::ArithmeticError(s)),
         None => unreachable!("we just ran the runner")
     }
 }

@@ -152,6 +152,13 @@ pub fn parse_pattern(input: &str) -> Result<Pattern, ParseError> {
     Ok(Pattern::new(ast))
 }
 
+#[macro_export]
+macro_rules! pat {
+    ($e:expr) => {{
+        $crate::parser::parse_pattern(stringify!($e)).unwrap()
+    }};
+}
+
 /// Parse a string into an `Expr`.
 ///
 /// An expression is similar to a pattern, except it cannot contain any
@@ -167,6 +174,13 @@ pub fn parse_expr(input: &str) -> Result<Expr, ParseError> {
     let mut ast = PatternAst::default();
     parse_pratt(&mut tokens, &mut ast, 0)?;
     ast.try_into().map_err(ParseError::VariableInExpr)
+}
+
+#[macro_export]
+macro_rules! expr {
+    ($e:expr) => {
+        $crate::parser::parse_expr(stringify!($e)).unwrap()
+    };
 }
 
 fn parse_pratt(
