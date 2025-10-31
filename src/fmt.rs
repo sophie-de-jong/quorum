@@ -3,8 +3,8 @@ use std::fmt::{self, Write};
 
 use egg::Id;
 
-use crate::math::{Assoc, Math, Op};
-use crate::parser::Expr;
+use crate::math::{Assoc, BinaryOp, Math, UnaryOp};
+use crate::parse::Expr;
 
 pub trait DisplayExpr {
     fn display<'a>(&'a self) -> Display<'a>;
@@ -38,7 +38,7 @@ impl fmt::Debug for Display<'_> {
 
 impl fmt::Display for Display<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.format_subexpr(f, self.root, 0)
+        self.display_subexpr(f, self.root, 0)
     }
 }
 
@@ -51,9 +51,12 @@ impl<'a> Display<'a> {
             Math::Mul([a, b]) => (*a, *b, f.debug_tuple("Mul")),
             Math::Div([a, b]) => (*a, *b, f.debug_tuple("Div")),
             Math::Pow([a, b]) => (*a, *b, f.debug_tuple("Pow")),
-            Math::Neg(a) => return f.debug_tuple("Neg")
-                .field(&self.expr.display_subexpr(*a))
-                .finish(),
+            Math::Neg(a) => {
+                return f
+                    .debug_tuple("Neg")
+                    .field(&self.expr.display_subexpr(*a))
+                    .finish();
+            }
             Math::Num(num) => return f.debug_tuple("Num").field(num).finish(),
             Math::Sym(sym) => return f.debug_tuple("Sym").field(sym).finish(),
             Math::Fn(sym, args) => {
@@ -62,8 +65,8 @@ impl<'a> Display<'a> {
                 for arg in args {
                     d.field(&self.expr.display_subexpr(*arg));
                 }
-                return d.finish()
-            },
+                return d.finish();
+            }
         };
 
         d.field(&self.expr.display_subexpr(lhs));
@@ -71,36 +74,70 @@ impl<'a> Display<'a> {
         d.finish()
     }
 
-    fn format_subexpr(&self, f: &mut fmt::Formatter, id: Id, max_bp: u8) -> fmt::Result {
-        let (lhs, rhs, op) = match &self.expr[id] {
-            Math::Add([a, b]) => (Some(*a), *b, Op::Add),
-            Math::Sub([a, b]) => (Some(*a), *b, Op::Sub),
-            Math::Mul([a, b]) => (Some(*a), *b, Op::Mul),
-            Math::Div([a, b]) => (Some(*a), *b, Op::Div),
-            Math::Rem([a, b]) => (Some(*a), *b, Op::Rem),
-            Math::Pow([a, b]) => (Some(*a), *b, Op::Pow),
-            Math::Neg(a) => (None, *a, Op::Sub),
-            Math::Num(num) => return write!(f, "{num}"),
-            Math::Sym(sym) => return write!(f, "{sym}"),
+    fn display_subexpr(&self, f: &mut fmt::Formatter, id: Id, max_bp: u8) -> fmt::Result {
+        match &self.expr[id] {
+            Math::Add([a, b]) => self.display_binary_expr(f, BinaryOp::Add, *a, *b, max_bp),
+            Math::Sub([a, b]) => self.display_binary_expr(f, BinaryOp::Sub, *a, *b, max_bp),
+            Math::Mul([a, b]) => self.display_binary_expr(f, BinaryOp::Mul, *a, *b, max_bp),
+            Math::Div([a, b]) => self.display_binary_expr(f, BinaryOp::Div, *a, *b, max_bp),
+            Math::Rem([a, b]) => self.display_binary_expr(f, BinaryOp::Rem, *a, *b, max_bp),
+            Math::Pow([a, b]) => self.display_binary_expr(f, BinaryOp::Pow, *a, *b, max_bp),
+            Math::Neg(a) => self.display_unary_expr(f, UnaryOp::Neg, *a, max_bp),
+            Math::Num(num) => write!(f, "{num}"),
+            Math::Sym(sym) => write!(f, "{sym}"),
             Math::Fn(sym, args) => {
                 write!(f, "{sym}(")?;
                 let mut iter = args.iter();
                 if let Some(arg) = iter.next() {
-                    self.format_subexpr(f, *arg, 0)?
+                    self.display_subexpr(f, *arg, 0)?
                 }
                 for arg in iter {
                     f.write_str(", ")?;
-                    self.format_subexpr(f, *arg, 0)?
+                    self.display_subexpr(f, *arg, 0)?
                 }
-                return f.write_char(')');
+                f.write_char(')')
             }
-        };
+        }
+    }
 
-        // Binary ops use infix precedence; unary ops use prefix precedence
-        let prec = match lhs {
-            Some(_) => op.precedence(),
-            None => op.prefix_precedence().unwrap(),
+    fn display_unary_expr(
+        &self,
+        f: &mut fmt::Formatter,
+        op: UnaryOp,
+        rhs: Id,
+        max_bp: u8,
+    ) -> fmt::Result {
+        let prec = op.precedence();
+        let rbp = match self.expr[rhs] {
+            // If the RHS is a unary negation, raise its binding power
+            // to force parentheses (e.g. `1-(-1)` instead of `1--1`)
+            Math::Neg(_) => u8::MAX,
+            _ => prec.right_bp(),
         };
+        let needs_parens = max_bp > rbp;
+
+        if needs_parens {
+            f.write_char('(')?
+        }
+
+        write!(f, "{op}")?;
+        self.display_subexpr(f, rhs, rbp)?;
+
+        if needs_parens {
+            f.write_char(')')?
+        };
+        Ok(())
+    }
+
+    fn display_binary_expr(
+        &self,
+        f: &mut fmt::Formatter,
+        op: BinaryOp,
+        lhs: Id,
+        rhs: Id,
+        max_bp: u8,
+    ) -> fmt::Result {
+        let prec = op.precedence();
         let lbp = prec.left_bp();
         let rbp = match self.expr[rhs] {
             // If the RHS is a unary negation, raise its binding power
@@ -121,13 +158,9 @@ impl<'a> Display<'a> {
             f.write_char('(')?
         }
 
-        if let Some(lhs) = lhs {
-            self.format_subexpr(f, lhs, lbp)?;
-            f.write_str(op.as_str())?;
-        } else {
-            f.write_str(op.as_str_prefix())?;
-        }
-        self.format_subexpr(f, rhs, rbp)?;
+        self.display_subexpr(f, lhs, lbp)?;
+        write!(f, "{op}")?;
+        self.display_subexpr(f, rhs, rbp)?;
 
         if needs_parens {
             f.write_char(')')?
@@ -141,7 +174,7 @@ mod test {
     macro_rules! expr {
         ($($t:tt)*) => {{
             use crate::fmt::DisplayExpr;
-            crate::parser::parse_expr(stringify!($($t)*))
+            crate::parse::parse_expr(stringify!($($t)*))
                 .unwrap()
                 .display()
                 .to_string()
@@ -175,8 +208,8 @@ mod test {
     #[test]
     fn test_unary_op() {
         assert_eq!(expr!(--x), "-(-x)");
-        assert_eq!(expr!(-(x^2)), "-x^2");
-        assert_eq!(expr!((-x)^2), "(-x)^2");
+        assert_eq!(expr!(-(x ^ 2)), "-x^2");
+        assert_eq!(expr!((-x) ^ 2), "(-x)^2");
         assert_eq!(expr!(1 - -2), "1 - (-2)");
         assert_eq!(expr!(1 * -1), "1*(-1)")
     }

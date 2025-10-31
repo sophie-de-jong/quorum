@@ -1,53 +1,120 @@
-[runner]
-# How many iterations to complete for aborting.
-iteration_limit = 30
-# Maximum number of nodes the e-graph can have before aborting.
-node_limit = 10_000
-timeout_ms = 5000
+iter-limit = 30
+node-limit = 10_000
+timeout = 5.0
+rule-ban-length = 5
+rule-match-limit = 1000
+num-threads = 1
+logging = "trace"
+folding = true
 
-[scheduler]
-disabled = true
-# How many iterations to ban a rule for.
-ban_length = 5
-# How many times a rule needs to be matched before it is banned.
-match_limit = 1000
-
-[cost]
-operator_weight = 1
-number_weight = 1.0
-variable_weight = 1.0
-# max_depth = 20
-
-[logging]
-# disabled = true
-# Which log messages to subscribe to.
-trace_rules = ["trace", "debug", "info"]
-
-[[rule]]
-name = "id"
-lhs = "X + 0"
-rhs = "X"
-# Prevents this rule from being banned.
-protected = true
+[[strategy]]
+name = "simple"
+optimize = "size"
+operator-weight = 1.0
+number-weight = 1.0
+variable-weight = 1.0
 
 [[rule]]
 name = "comm-add"
-lhs = "X + Y"
-rhs = "Y + X"
-# Means this rule can be used in both directions.
-bidirectional = true
+lhs = "A + B"
+rhs = "B + A"
 
 [[rule]]
-name = "assoc"
-lhs = "(X + Y) + Z"
-rhs = "X + (Y + Z)"
-bidirectional = true
-disabled = true
+name = "comm-mul"
+lhs = "A * B"
+rhs = "B * A"
 
 [[rule]]
-name = "div-def"
-lhs = "X / Y"
-rhs = "X * (1 / Y)"
-bidirectional = true
-# List of conditions that must be satisfied before this rule can be applied.
-condition = "Y != 0"
+name = "assoc-add"
+lhs = "(A + B) + C"
+rhs = "A + (B + C)"
+
+[[rule]]
+name = "assoc-mul"
+lhs = "(A * B) + C"
+rhs = "A * (B + C)"
+
+[[rule]]
+name = "sub-canon"
+lhs = "A - B"
+rhs = "A + (-1 * B)"
+
+[[rule]]
+name = "div-canon"
+lhs = "A / B"
+rhs = "A * (B ^ -1)"
+
+[[rule]]
+name = "zero-add"
+lhs = "A + 0"
+rhs = "A"
+
+[[rule]]
+name = "zero-mul"
+lhs = "A * 0"
+rhs = "0"
+
+[[rule]]
+name = "one-mul"
+lhs = "A * 1"
+rhs = "A"
+
+[[rule]]
+name = "add-zero"
+lhs = "A"
+rhs = "A + 0"
+
+[[rule]]
+name = "mul-one"
+lhs = "A"
+rhs = "A * 1"
+
+[[rule]]
+name = "cancel-sub"
+lhs = "A - A"
+rhs = "0"
+
+[[rule]]
+name = "cancel-div"
+lhs = "A / A"
+rhs = "1"
+
+[[rule]]
+name = "distribute"
+lhs = "A * (B + C)"
+rhs = "(A * B) + (A * C)"
+
+[[rule]]
+name = "factor"
+lhs = "(A * B) + (A * C)"
+rhs = "A * (B + C)"
+
+[[rule]]
+name = "pow-mul"
+lhs = "A ^ B * A ^ C"
+rhs = "A ^ (B + C)"
+
+[[rule]]
+name = "pow-zero"
+lhs = "X ^ 0"
+rhs = "1"
+
+[[rule]]
+name = "pow-one"
+lhs = "X ^ 1"
+rhs = "X"
+
+[[rule]]
+name = "pow-two"
+lhs = "X ^ 2"
+rhs = "X * X"
+
+[[rule]]
+name = "pow-recip"
+lhs = "X ^ -1"
+rhs = "1 / X"
+
+[[rule]]
+name = "recip-mul-div"
+lhs = "X * (1 / X)"
+rhs = "1"
